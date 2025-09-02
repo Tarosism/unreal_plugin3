@@ -57,20 +57,12 @@
 #include "Analyzers/FBPLintAnalyzer.h"
 #include "Analyzers/FProjectAnalyzer.h"
 
-static void AddFrontMatter(TSharedRef<FJsonObject> J);
 
 
 
 //#include "Kismet2/BlueprintEditorUtils.h" // optional (for extra helpers)
 
 IMPLEMENT_MODULE(FBPTextDumpModule, BPTextDump);
-
-// 기존 파일 안의 정적 헬퍼들을 앞에서 참조할 수 있도록 프로토타입 추가
-static bool WriteJsonToFile(const FJsonObject& Root, const FString& OutPath);
-static bool WriteTextToFile(const FString& Text, const FString& OutPath)
-{
-    return BPTextDumpUtils::WriteTextToFile(Text, OutPath);
-}
 
 static FString DefaultOutDir()
 {
@@ -109,7 +101,7 @@ static FString BuildBPFlowDSL(UBlueprint* BP, UEdGraph* Graph)
 
     for (UEdGraphNode* N : Nodes)
     {
-        const FString Title = Sanitize(N->GetNodeTitle(ENodeTitleType::ListView).ToString());
+        const FString Title = BPTextDumpUtils::Sanitize(N->GetNodeTitle(ENodeTitleType::ListView).ToString());
         const FString AKey = BTD::AnchorForNode(N);
         FString Line = FString::Printf(TEXT("@%d[%s] %s | %s"),
             Idx[N], *AKey, *N->GetClass()->GetName(), *Title);
@@ -132,10 +124,10 @@ static FString BuildBPFlowDSL(UBlueprint* BP, UEdGraph* Graph)
                 int Shown = 0;
                 for (UEdGraphPin* P : N->Pins)
                 {
-                    if (!IsInputDataPin(P)) continue;
+                    if (!BPTextDumpUtils::IsInputDataPin(P)) continue;
                     if (P->LinkedTo.Num() > 0) continue;
 
-                    const FString V = PinDefaultInline(P);
+                    const FString V = BPTextDumpUtils::PinDefaultInline(P);
                     if (!V.IsEmpty())
                     {
                         Line += FString::Printf(TEXT(" | %s: %s"), *P->PinName.ToString(), *V);
@@ -223,7 +215,7 @@ static void BuildLintForBP(
     const FString PkgDir = FPaths::GetPath(PkgPath);
     const FString BPDir = FPaths::Combine(OutRoot, PkgDir);
     const FString DefUsePath = FPaths::Combine(BPDir, FString::Printf(TEXT("%s.bpdefuse.json"), *BP->GetName()));
-    TSharedPtr<FJsonObject> JDefUse = LoadJsonObject(DefUsePath);
+    TSharedPtr<FJsonObject> JDefUse = BPTextDumpUtils::LoadJsonObject(DefUsePath);
     TMap<FString, FVRW> VarRW;
     if (JDefUse.IsValid() && JDefUse->HasField(TEXT("vars")))
     {
@@ -268,10 +260,10 @@ static void BuildLintForBP(
                 {
                     for (UEdGraphPin* In : N->Pins)
                     {
-                        if (!IsDataInputPin(In)) continue;
+                        if (!BPTextDumpUtils::IsDataInputPin(In)) continue;
                         if (In->LinkedTo.Num() == 0)
                         {
-                            const FString D = PinDefaultOrText(In);
+                            const FString D = BPTextDumpUtils::PinDefaultOrText(In);
                             if (!D.IsEmpty())
                             {
                                 const bool bNum = LooksNumericStrict(D);
@@ -305,8 +297,8 @@ static void BuildLintForBP(
                             if (!CF_ArrayGet) continue;
                             UFunction* F2 = CF_ArrayGet->GetTargetFunction();
                             if (!F2 || !F2->GetName().Contains(TEXT("Array_Get"))) continue;
-                            UEdGraphPin* Idx = FindInputPinByName(CF_ArrayGet, TEXT("Index"));
-                            const FString D = PinDefaultOrText(Idx);
+                            UEdGraphPin* Idx = BPTextDumpUtils::FindInputPinByName(CF_ArrayGet, TEXT("Index"));
+                            const FString D = BPTextDumpUtils::PinDefaultOrText(Idx);
                             if (D == TEXT("0"))
                             {
                                 TArray<FString> Ev; Ev.Add(AKey[CF_GetAll]); Ev.Add(AKey[CF_ArrayGet]);
@@ -504,7 +496,7 @@ static void BuildLintForBP(
     // 파일 출력
     IFileManager::Get().MakeDirectory(*BPDir, true);
     const FString OutPath = FPaths::Combine(BPDir, FString::Printf(TEXT("%s.bplint.md"), *BP->GetName()));
-    WriteTextToFile(MD, OutPath);
+    BPTextDumpUtils::WriteTextToFile(MD, OutPath);
 }
 
 
@@ -538,8 +530,8 @@ static int32 DumpBlueprintToDir(UBlueprint* BP, const FString& OutRoot)
     IFileManager::Get().MakeDirectory(*BPDir, true);
 
     TSharedRef<FJsonObject> MetaJson = MakeShared<FJsonObject>();
-    AddFrontMatter(MetaJson);
-    WriteJsonToFile(*MetaJson, FPaths::Combine(BPDir, FString::Printf(TEXT("%s__BP__Meta.bpmeta.json"), *BP->GetName())));
+    BPTextDumpUtils::AddFrontMatter(MetaJson);
+    BPTextDumpUtils::WriteJsonToFile(*MetaJson, FPaths::Combine(BPDir, FString::Printf(TEXT("%s__BP__Meta.bpmeta.json"), *BP->GetName())));
 
     return 0;
 }
@@ -549,12 +541,6 @@ static int32 DumpBlueprintToDir(UBlueprint* BP, const FString& OutRoot)
 // ---------------- module ----------------
 
 // --- 내부 도우미 ---
-static bool IsDataInputPin(const UEdGraphPin* P)
-{
-    return P && P->Direction == EGPD_Input && P->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec;
-}
-
-
 // 입력 핀에서 VariableGet까지 링크를 따라가 객체 변수명을 추출한다.
 // UK2Node_Knot(리루트) 같은 중간 노드는 재귀적으로 관통한다.
 static FString GetObjectVarNameFromInputPin(UEdGraphPin* Pin)
@@ -686,12 +672,12 @@ static void BuildDefUseForBP(
 
             if (const UK2Node_VariableSet* SetNode = Cast<UK2Node_VariableSet>(N)) {
                 const FName Var = SetNode->GetVarName();
-                if (!Var.IsNone()) AddVarAnchor(VarWrites, Var.ToString(), NodeAnchor);
+                if (!Var.IsNone()) BPTextDumpUtils::AddVarAnchor(VarWrites, Var.ToString(), NodeAnchor);
             }
 
             if (const UK2Node_VariableGet* GetNode = Cast<UK2Node_VariableGet>(N)) {
                 const FName Var = GetNode->GetVarName();
-                if (!Var.IsNone()) AddVarAnchor(VarReads, Var.ToString(), NodeAnchor);
+                if (!Var.IsNone()) BPTextDumpUtils::AddVarAnchor(VarReads, Var.ToString(), NodeAnchor);
             }
 
             if (const UK2Node_CallFunction* Call = Cast<UK2Node_CallFunction>(N)) {
@@ -701,18 +687,18 @@ static void BuildDefUseForBP(
                     if (ExtractPropertyFromFunctionName(Fn->GetName(), Prop, bWrite)) {
                         const FString ObjName = GetCallTargetObjectVarName(Call);
                         if (!ObjName.IsEmpty()) {
-                            AddObjPropAnchor(Objects, ObjName, Prop, bWrite, NodeAnchor);
+                            BPTextDumpUtils::AddObjPropAnchor(Objects, ObjName, Prop, bWrite, NodeAnchor);
                         }
                     }
                 }
                 // 입력 핀에 물린 GET → 변수 read (소비자 기준 앵커도 NodeAnchor 사용)
                 for (UEdGraphPin* In : Call->Pins) {
-                    if (!IsDataInputPin(In)) continue;
+                    if (!BPTextDumpUtils::IsDataInputPin(In)) continue;
                     for (UEdGraphPin* L : In->LinkedTo) {
                         if (!L || !L->GetOwningNode()) continue;
                         if (const UK2Node_VariableGet* Get2 = Cast<UK2Node_VariableGet>(L->GetOwningNode())) {
                             const FName V = Get2->GetVarName();
-                            if (!V.IsNone()) AddVarAnchor(VarReads, V.ToString(), NodeAnchor);
+                            if (!V.IsNone()) BPTextDumpUtils::AddVarAnchor(VarReads, V.ToString(), NodeAnchor);
                         }
                     }
                 }
@@ -724,7 +710,7 @@ static void BuildDefUseForBP(
 
     // --- JSON 빌드 ---
     TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
-    AddFrontMatter(Root); // ue_version, plugin_version
+    BPTextDumpUtils::AddFrontMatter(Root); // ue_version, plugin_version
     Root->SetStringField(TEXT("bp"), BP->GetName());
 
     // hashes
@@ -822,7 +808,7 @@ static void BuildDefUseForBP(
     IFileManager::Get().MakeDirectory(*BPDir, true);
 
     const FString OutPath = FPaths::Combine(BPDir, FString::Printf(TEXT("%s.bpdefuse.json"), *BP->GetName()));
-    WriteJsonToFile(*Root, OutPath);
+    BPTextDumpUtils::WriteJsonToFile(*Root, OutPath);
 }
 
 
@@ -867,22 +853,22 @@ static void BuildAndWriteSummaryForBP(
     const FString DefUsePath = FPaths::Combine(BPDir, FString::Printf(TEXT("%s.bpdefuse.json"), *BP->GetName()));
 
     // Load previously generated analysis
-    TSharedPtr<FJsonObject> JMeta = LoadJsonObject(MetaFilePath);
-    TSharedPtr<FJsonObject> JCatalog = LoadJsonObject(CatalogPath);
-    TSharedPtr<FJsonObject> JDefUse = LoadJsonObject(DefUsePath);
+    TSharedPtr<FJsonObject> JMeta = BPTextDumpUtils::LoadJsonObject(MetaFilePath);
+    TSharedPtr<FJsonObject> JCatalog = BPTextDumpUtils::LoadJsonObject(CatalogPath);
+    TSharedPtr<FJsonObject> JDefUse = BPTextDumpUtils::LoadJsonObject(DefUsePath);
 
     // Entry points from catalog slices
-    TArray<FString> EntryIds; ExtractEntryPointsFromCatalog(JCatalog, EntryIds);
+    TArray<FString> EntryIds; BPTextDumpUtils::ExtractEntryPointsFromCatalog(JCatalog, EntryIds);
 
     // Public API from per-graph flow jsons
     TArray<FPublicApiInfo> PublicApis;
-    ExtractPublicApisFromFlows(FlowJsonPaths, PublicApis);
+    BPTextDumpUtils::ExtractPublicApisFromFlows(FlowJsonPaths, PublicApis);
 
     // Top variables (by reads+writes) with friendly types from meta
-    TArray<FVarMeta> TopVars; ExtractVarUsage(JMeta, JDefUse, TopVars);
+    TArray<FVarMeta> TopVars; BPTextDumpUtils::ExtractVarUsage(JMeta, JDefUse, TopVars);
 
     // Dependencies (object var names) from defuse objects
-    TArray<FString> DependsOn; ExtractDependencies(JDefUse, DependsOn);
+    TArray<FString> DependsOn; BPTextDumpUtils::ExtractDependencies(JDefUse, DependsOn);
 
     // Role heuristic
     FString Role;
@@ -915,7 +901,7 @@ static void BuildAndWriteSummaryForBP(
     {
         for (const FString& Id : EntryIds)
         {
-            const FString Label = NormalizeEventIdForLabel(Id);
+            const FString Label = BPTextDumpUtils::NormalizeEventIdForLabel(Id);
             MD += FString::Printf(TEXT("- **%s**: (see: `%s`)\n"), *Label, *Id);
         }
         MD += TEXT("\n");
@@ -944,7 +930,7 @@ static void BuildAndWriteSummaryForBP(
     {
         for (const FVarMeta& V : TopVars)
         {
-            const FString Ty = FriendlyFromCategory(V.Cat, V.Sub);
+            const FString Ty = BPTextDumpUtils::FriendlyFromCategory(V.Cat, V.Sub);
             MD += FString::Printf(TEXT("- `%s` (%s)\n"), *V.Name, *Ty);
         }
         MD += TEXT("\n");
@@ -976,13 +962,13 @@ static void BuildAndWriteSummaryForBP(
     // Then add function graph flows (their slices exist as \"flow.<slug>\")
     for (const FPublicApiInfo& A : PublicApis)
     {
-        const FString Slugged = Slug(A.Name);
+        const FString Slugged = BPTextDumpUtils::Slug(A.Name);
         MD += TEXT("- flow.") + Slugged + TEXT("\n");
     }
 
     IFileManager::Get().MakeDirectory(*BPDir, true);
     const FString OutPath = FPaths::Combine(BPDir, FString::Printf(TEXT("%s.bpsmry.md"), *BP->GetName()));
-    WriteTextToFile(MD, OutPath);
+    BPTextDumpUtils::WriteTextToFile(MD, OutPath);
 
 }
 
@@ -1364,7 +1350,7 @@ void FBPTextDumpModule::CmdProjectRefs(const TArray<FString>& Args)
     if (Result.IsValid())
     {
         const FString OutPath = FPaths::Combine(OutRoot, TEXT("project_references.json"));
-        WriteJsonToFile(*Result, OutPath);
+        BPTextDumpUtils::WriteJsonToFile(*Result, OutPath);
     }
 }
 
